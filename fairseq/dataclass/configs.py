@@ -173,6 +173,12 @@ class CommonConfig(FairseqDataclass):
     profile: bool = field(
         default=False, metadata={"help": "enable autograd profiler emit_nvtx"}
     )
+    reset_logging: bool = field(
+        default=True,
+        metadata={
+            "help": "when using Hydra, reset the logging at the beginning of training"
+        },
+    )
 
 
 @dataclass
@@ -203,10 +209,6 @@ class DistributedTrainingConfig(FairseqDataclass):
         },
     )
     device_id: int = field(
-        default=0,
-        metadata={"help": "which GPU to use (usually configured automatically)"},
-    )
-    local_rank: int = field(
         default=0,
         metadata={
             "help": "which GPU to use (usually configured automatically)",
@@ -400,14 +402,14 @@ class DatasetConfig(FairseqDataclass):
         default=False, metadata={"help": "disable validation"}
     )
     max_tokens_valid: Optional[int] = field(
-        default=None,
+        default=II("dataset.max_tokens"),
         metadata={
             "help": "maximum number of tokens in a validation batch"
             " (defaults to --max-tokens)"
         },
     )
     batch_size_valid: Optional[int] = field(
-        default=None,
+        default=II("dataset.batch_size"),
         metadata={
             "help": "batch size of the validation batch (defaults to --batch-size)",
             "argparse_alias": "--max-sentences-valid",
@@ -874,7 +876,7 @@ class InteractiveConfig(FairseqDataclass):
 
 
 @dataclass
-class FairseqConfig(object):
+class FairseqConfig(FairseqDataclass):
     common: CommonConfig = CommonConfig()
     common_eval: CommonEvalConfig = CommonEvalConfig()
     distributed_training: DistributedTrainingConfig = DistributedTrainingConfig()

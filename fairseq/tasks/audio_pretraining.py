@@ -5,7 +5,6 @@
 # the root directory of this source tree. An additional grant of patent rights
 # can be found in the PATENTS file in the same directory.
 
-import editdistance
 import os
 import sys
 import torch
@@ -107,6 +106,7 @@ class AudioPretrainingTask(FairseqTask):
         self._source_dictionary = source_dictionary
         if cfg.eval_wer:
             assert cfg.labels is not None, "eval_wer can only be set during fine-tuning"
+        self.blank_symbol = "<s>"
 
     @classmethod
     def setup_task(cls, cfg: AudioPretrainingConfig, **kwargs):
@@ -212,6 +212,8 @@ class AudioPretrainingTask(FairseqTask):
         return model
 
     def _inference_with_wer(self, generator, sample, model):
+        import editdistance
+
         def decode(toks):
             s = self.target_dictionary.string(
                 toks.int().cpu(),

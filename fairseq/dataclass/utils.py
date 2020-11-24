@@ -5,6 +5,7 @@
 
 import ast
 import os
+import logging
 import re
 from argparse import ArgumentError, ArgumentParser, Namespace
 from dataclasses import _MISSING_TYPE, MISSING
@@ -15,7 +16,10 @@ from typing import Any, Dict, List, Tuple, Type
 from fairseq.dataclass import FairseqDataclass
 from fairseq.dataclass.configs import FairseqConfig
 from hydra.experimental import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf, open_dict
+
+logger = logging.getLogger(__name__)
 
 
 def eval_str_list(x, x_type=float):
@@ -153,7 +157,11 @@ def gen_parser_from_dataclass(
             if isinstance(kwargs["default"], str) and kwargs["default"].startswith(
                 "${"
             ):
-                continue
+                if kwargs["help"] is None:
+                    # this is a field with a name that will be added elsewhere
+                    continue
+                else:
+                    del kwargs["default"]
             if delete_default:
                 del kwargs["default"]
         try:
@@ -210,7 +218,7 @@ def _override_attr(
             isinstance(val, str)
             and not val.startswith("${")  # not interpolation
             and field_type != str
-            and inspect.isclass(field_type) and not issubclass(field_type, Enum)  # not choices enum
+            and (not inspect.isclass(field_type) or not issubclass(field_type, Enum))  # not choices enum
         ):
             # upgrade old models that stored complex parameters as string
             val = ast.literal_eval(val)
@@ -218,7 +226,11 @@ def _override_attr(
         if isinstance(val, tuple):
             val = list(val)
 
-        if getattr(v.type, "__origin__", None) is List:
+        if (
+            getattr(v.type, "__origin__", None) is List
+            # skip interpolation
+            and not (isinstance(val, str) and val.startswith("${"))
+        ):
             # if type is int but val is float, then we will crash later - try to convert here
             t_args = v.type.__args__
             if len(t_args) == 1:
@@ -233,6 +245,10 @@ def _override_attr(
             overrides.append("{}.{}='{}'".format(sub_node, k, val))
         elif isinstance(val, FairseqDataclass):
             overrides += _override_attr(f"{sub_node}.{k}", type(val), args)
+        elif isinstance(val, Namespace):
+            sub_overrides, _ = override_module_args(val)
+            for so in sub_overrides:
+                overrides.append(f"{sub_node}.{k}.{so}")
         else:
             overrides.append("{}.{}={}".format(sub_node, k, val))
 
@@ -321,8 +337,15 @@ def convert_namespace_to_omegaconf(args: Namespace) -> DictConfig:
     # configs will be in fairseq/config after installation
     config_path = os.path.join("..", "config")
 
+    GlobalHydra.instance().clear()
+
     with initialize(config_path=config_path):
-        composed_cfg = compose("config", overrides=overrides, strict=False)
+        try:
+            composed_cfg = compose("config", overrides=overrides, strict=False)
+        except:
+            logger.error("Error when composing. Overrides: " + str(overrides))
+            raise
+
         for k in deletes:
             composed_cfg[k] = None
 
@@ -374,7 +397,8 @@ def convert_namespace_to_omegaconf(args: Namespace) -> DictConfig:
 
 
 def populate_dataclass(
-    dataclass: FairseqDataclass, args: Namespace,
+    dataclass: FairseqDataclass,
+    args: Namespace,
 ) -> FairseqDataclass:
     for k in dataclass.__dataclass_fields__.keys():
         if k.startswith("_"):
@@ -416,6 +440,7 @@ def overwrite_args_by_name(cfg: DictConfig, overrides: Dict[str, any]):
 def merge_with_parent(dc: FairseqDataclass, cfg: FairseqDataclass):
     dc_instance = DictConfig(dc)
     dc_instance.__dict__["_parent"] = cfg.__dict__["_parent"]
-    cfg = OmegaConf.merge(dc_instance, cfg)
+    with open_dict(dc_instance):
+        cfg = OmegaConf.merge(dc_instance, cfg)
     OmegaConf.set_struct(cfg, True)
     return cfg
